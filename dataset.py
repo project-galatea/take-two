@@ -1,6 +1,7 @@
 import numpy as np
+import config
 
-SEQ_MAX_LEN = 64 # TODO: move to config file, and actually determine value instead of randomly guessing
+SEQ_MAX_LEN = config.seq['max_len']
 
 class Dataset():
 	def __init__(self, files):
