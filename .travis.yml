@@ -5,3 +5,4 @@ script: nosetests
 branches:
   except:
   - master
+
