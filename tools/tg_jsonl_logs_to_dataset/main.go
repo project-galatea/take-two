@@ -11,6 +11,7 @@ import (
 	"sync"
 )
 
+// A Telegram message from the logs
 type Message struct {
 	Event   string `json:"event"`
 	ID      string `json:"id"`
@@ -54,6 +55,7 @@ type Message struct {
 	} `json:"media"`
 }
 
+// The result message from readLogFile()
 type ReadLogRes struct {
 	Error    error
 	Success  bool
@@ -69,22 +71,27 @@ func main() {
 
 	logFiles := strings.Split(*inFile, ",")
 
+	// A channel that is used for the output of readLogFile()
 	outChan := make(chan ReadLogRes, len(logFiles))
 
+	// Start reading log files
 	for _, logFile := range logFiles {
 		go readLogFile(outChan, logFile)
 	}
 
+	// Create an output file
 	f, err := os.Create(*outFile)
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
 
+	// Listen to the output channel from readLogFile() goroutines
 	var numDone int
 	for {
 		res := <-outChan
 
+		// Write to out file if the result was a success
 		if res.Success {
 			log.Println("Writing", res.FileName, "to out")
 			_, err := f.Write(res.Output)
@@ -98,6 +105,7 @@ func main() {
 			log.Println("Result was not a success:", res.Error)
 		}
 
+		// If there are no more outputs, quit.
 		numDone++
 		if numDone >= len(logFiles) {
 			break
@@ -107,11 +115,14 @@ func main() {
 	log.Println("Finished Converting Logs. Quitting...")
 }
 
+// This is run per log file. It gets a filename and a channel to send the result to. The result is a string of messages
+// seperated by newline.
 func readLogFile(outChan chan ReadLogRes, fn string) {
 	var err error
 	var res []byte
 
 	defer func() {
+		// All variables in here can be changed by the external prgm
 		outChan <- ReadLogRes{
 			Error:    err,
 			Success:  err == nil && len(res) > 0,
@@ -120,45 +131,54 @@ func readLogFile(outChan chan ReadLogRes, fn string) {
 		}
 	}()
 
+	// Reads file to byte array
 	fileBytes, err := ioutil.ReadFile(fn)
 	if err != nil {
 		log.Println("Error! Could not read file:", fn, "With error:", err)
 		return
 	}
 
+	// Split byte array by newline
 	msgs := bytes.Split(fileBytes, []byte{'\n'})
 
-	msgCount := 0
-	for _, msgBytes := range msgs {
-		if len(msgBytes) > 3 {
-			msgCount++
-		}
-	}
+	// Allocate a new array for the output of msgs
+	msgTexts := make([]string, len(msgs))
 
-	msgTexts := make([]string, msgCount)
-
+	// Create a new sync
 	wait := new(sync.WaitGroup)
 	for i, msgBytes := range msgs {
 		wait.Add(1)
 
+		// Run msg decode and add the output to the new array
 		go func(j int, msgB []byte, fileName string) {
 			defer wait.Done()
 			msgTxt := doMsgDecode(msgB, fileName)
-			if msgTxt != "" {
-				msgTexts[j] = msgTxt
-			}
+			msgTexts[j] = msgTxt
 		}(i, msgBytes, fn)
 	}
+	// Wait for the for loop data processing to finish
+	wait.Wait()
 
-	for i := len(msgTexts)/2-1; i >= 0; i-- {
-		opp := len(msgTexts)-1-i
-		msgTexts[i], msgTexts[opp] = msgTexts[opp], msgTexts[i]
+
+	// Filters out blank messages
+	filteredMsgTxts := msgTexts[:0]
+	for _, x := range msgTexts {
+		if x != "" {
+			filteredMsgTxts = append(filteredMsgTxts, x)
+		}
 	}
 
-	res = []byte(strings.Join(msgTexts, "\n"))
-	log.Println("Finished", fn, "with a msg length of:", len(msgTexts), "and a result length of:", len(res))
+	// Reverses messages so the newest ones are at the bottom
+	for i := len(filteredMsgTxts)/2-1; i >= 0; i-- {
+		opp := len(filteredMsgTxts)-1-i
+		filteredMsgTxts[i], filteredMsgTxts[opp] = filteredMsgTxts[opp], filteredMsgTxts[i]
+	}
+
+	res = []byte(strings.Join(filteredMsgTxts, "\n"))
+	log.Println("Finished", fn, "with a msg length of:", len(filteredMsgTxts), "and a result length of:", len(res))
 }
 
+// Reads given JSON string and outputs a sanitized text message or a blank string if a message is not available.
 func doMsgDecode(msgBytes []byte, fileName string) string {
 	if len(msgBytes) <= 3 {
 		return ""
